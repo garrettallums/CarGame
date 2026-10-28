@@ -118,7 +118,7 @@ export class GameWorld {
       [3, 6],
       [-1, 12],
     ]) {
-      const p = beside(1, 30 + along, o);
+      const p = beside(1, -70 + along, o);
       D.add('barricade', p.x, p.z, p.yaw + Math.PI / 2);
     }
     for (const o of [-6, 6]) {
@@ -131,7 +131,7 @@ export class GameWorld {
       const p = beside(0, tt, 9);
       D.add('sign', p.x, p.z, p.yaw);
     }
-    for (const tt of [-140, -60, 70, 140]) {
+    for (const tt of [-140, -30, 70, 140]) {
       const p = beside(1, tt, -9);
       D.add('sign', p.x, p.z, p.yaw);
     }
@@ -154,17 +154,17 @@ export class GameWorld {
     }
     this.dummies.push({ def: 'truck', position: lane[3].clone(), yaw: roadPoint(0, -75).yaw, route: lane, speed: 11 });
 
-    // Sedan loops the cross road.
+    // Sedan loops the north half of the cross road, short of the checkpoint.
     const lane2: THREE.Vector3[] = [];
-    for (let s = -140; s <= 140; s += 25) {
+    for (let s = -35; s <= 140; s += 25) {
       const p = beside(1, s, -3.5);
       lane2.push(this.ground(p.x, p.z));
     }
-    for (let s = 140; s >= -140; s -= 25) {
+    for (let s = 140; s >= -35; s -= 25) {
       const p = beside(1, s, 3.5);
       lane2.push(this.ground(p.x, p.z));
     }
-    this.dummies.push({ def: 'sedan', position: lane2[8].clone(), yaw: roadPoint(1, 60).yaw, route: lane2, speed: 13 });
+    this.dummies.push({ def: 'sedan', position: lane2[4].clone(), yaw: roadPoint(1, 65).yaw, route: lane2, speed: 13 });
 
     // Buggy circles an open patch of sand.
     const circle: THREE.Vector3[] = [];

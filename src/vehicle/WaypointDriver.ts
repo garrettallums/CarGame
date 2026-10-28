@@ -9,7 +9,7 @@ const _f = new THREE.Vector3();
  * interface the player uses, so it obeys momentum and steering limits.
  */
 export class WaypointDriver {
-  private index = 0;
+  private index = -1;
   private stuckTime = 0;
   private reverseTime = 0;
 
@@ -20,9 +20,30 @@ export class WaypointDriver {
   ) {}
 
   reset(): void {
-    this.index = 0;
+    this.index = -1;
     this.stuckTime = 0;
     this.reverseTime = 0;
+  }
+
+  /** Pick the closest waypoint that lies ahead of the car. */
+  private pickStart(): void {
+    const v = this.vehicle;
+    const pos = v.interp.pos;
+    _f.set(0, 0, 1).applyQuaternion(v.interp.rot);
+    let best = 0;
+    let bestScore = Infinity;
+    this.points.forEach((p, i) => {
+      const dx = p.x - pos.x;
+      const dz = p.z - pos.z;
+      const d = Math.hypot(dx, dz);
+      const ahead = (dx * _f.x + dz * _f.z) / (d || 1);
+      const score = d + (ahead < 0.2 ? 1000 : 0);
+      if (score < bestScore) {
+        bestScore = score;
+        best = i;
+      }
+    });
+    this.index = best;
   }
 
   update(dt: number): void {
@@ -34,6 +55,7 @@ export class WaypointDriver {
       input.steer = 0;
       return;
     }
+    if (this.index < 0) this.pickStart();
     const pos = v.interp.pos;
     let target = this.points[this.index];
     if (Math.hypot(target.x - pos.x, target.z - pos.z) < 9) {
