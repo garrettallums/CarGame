@@ -36,7 +36,8 @@ document.addEventListener(
 );
 document.addEventListener('dblclick', (e) => e.preventDefault());
 
-if ('serviceWorker' in navigator && import.meta.env.PROD) {
+// The single-file artifact build runs in a sandbox where service workers are unavailable.
+if ('serviceWorker' in navigator && import.meta.env.PROD && import.meta.env.MODE !== 'artifact') {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
   });

@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview --host",
-    "test:smoke": "node scripts/smoke-test.mjs"
+    "test:smoke": "node scripts/smoke-test.mjs",
+    "build:artifact": "node scripts/build-artifact.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "0.19.3",
