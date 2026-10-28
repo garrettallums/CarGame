@@ -6,7 +6,6 @@ const PRESS_MAP: Record<string, ButtonAction> = {
   Escape: 'pause',
   KeyP: 'pause',
   Backquote: 'toggleTuning',
-  KeyT: 'respawnWorld',
   F3: 'toggleDebug',
   KeyC: 'toggleCamera',
 };

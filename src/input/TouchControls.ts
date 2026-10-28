@@ -35,7 +35,7 @@ export class TouchControls implements InputSource {
       <button class="t-btn t-hand" data-hold="handbrake">DRIFT</button>
       <button class="t-btn t-gas" data-hold="gas">GAS</button>
       <button class="t-btn t-brake" data-hold="brake">BRAKE</button>
-      <button class="t-btn t-small t-reset" data-press="reset">&#8634;</button>
+      <button class="t-btn t-small t-reset" data-press="reset" aria-label="Flip upright">&#8634;</button>
       <button class="t-btn t-small t-pause" data-press="pause">II</button>
       <button class="t-btn t-small t-tune" data-press="toggleTuning">&#9881;</button>
     `;

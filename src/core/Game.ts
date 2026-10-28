@@ -9,7 +9,14 @@ import { PHYSICS, DAMAGE } from '../config/physics';
 import { CAMERA } from '../config/camera';
 import { WORLD } from '../config/world';
 import { DESTRUCTIBLES } from '../config/props';
-import { PLAYER_CAR, DUMMY_BUGGY, DUMMY_SEDAN, DUMMY_TRUCK } from '../config/vehicles';
+import { PLAYER_CAR, DUMMY_BUGGY, DUMMY_SEDAN, DUMMY_HAULER, type VehicleConfig } from '../config/vehicles';
+import { ROUND } from '../config/round';
+import { PAINTS, applyUpgrades } from '../config/upgrades';
+import { Progress } from '../game/Progress';
+import { Round, type RoundResult } from '../game/Round';
+import { RoundHud } from '../ui/RoundHud';
+import { Garage } from '../ui/Garage';
+import { Results } from '../ui/Results';
 import { GameWorld } from '../world/World';
 import type { Destructible } from '../world/Destructibles';
 import { DebrisSystem } from '../fx/Debris';
@@ -27,6 +34,8 @@ import { TuningPanel, type TuningSection } from '../ui/TuningPanel';
 import { PauseMenu } from '../ui/PauseMenu';
 import { Debug } from '../ui/Debug';
 import { AudioEngine } from '../audio/AudioEngine';
+
+export type GameMode = 'garage' | 'run' | 'results';
 
 type Owner = { kind: 'vehicle'; v: Vehicle } | { kind: 'prop'; d: Destructible } | { kind: 'static' } | { kind: 'terrain' };
 
@@ -75,10 +84,22 @@ export class Game {
   readonly gw: GameWorld;
   readonly debris: DebrisSystem;
   readonly fx: Effects;
-  readonly player: Vehicle;
+  player!: Vehicle;
   readonly dummies: Vehicle[] = [];
   readonly drivers: WaypointDriver[] = [];
   readonly vehicles: Vehicle[] = [];
+  readonly progress = new Progress();
+  readonly round: Round;
+  readonly roundHud: RoundHud;
+  readonly garage: Garage;
+  readonly results: Results;
+  /** Player config before upgrades; the tuning panel edits this. */
+  readonly baseConfig: VehicleConfig = { ...PLAYER_CAR.config };
+  mode: GameMode = 'garage';
+  /** Run rules, exposed for tests and tuning. */
+  readonly rules = ROUND;
+  private ctx: GameContext;
+  private isTouch = false;
   readonly input: InputManager;
   readonly touch: TouchControls;
   readonly hud: Hud;
@@ -139,17 +160,12 @@ export class Game {
     this.fx = new Effects();
     this.scene.add(this.fx.group);
 
-    const ctx: GameContext = { R, world: this.world, scene: this.scene, terrain: this.gw.terrain, debris: this.debris };
-    const sp = this.gw.playerSpawn;
-    this.player = VehicleFactory.create(ctx, PLAYER_CAR, { isPlayer: true, position: sp.position, yaw: sp.yaw });
-    this.addVehicle(this.player);
-    const defs = { buggy: DUMMY_BUGGY, sedan: DUMMY_SEDAN, truck: DUMMY_TRUCK };
-    for (const spawn of this.gw.dummies) {
-      const v = VehicleFactory.create(ctx, defs[spawn.def], { position: spawn.position, yaw: spawn.yaw });
-      this.addVehicle(v);
-      this.dummies.push(v);
-      if (spawn.route.length) this.drivers.push(new WaypointDriver(v, spawn.route, spawn.speed));
-    }
+    this.ctx = { R, world: this.world, scene: this.scene, terrain: this.gw.terrain, debris: this.debris };
+    this.rebuildPlayer();
+    this.spawnDummies();
+    this.round = new Round(this.gw.extractPoints, (x, z) => this.gw.terrain.heightAt(x, z));
+    this.round.onEnd = (r) => this.onRoundEnd(r);
+    this.scene.add(this.round.zone);
 
     this.rig = new CameraRig(window.innerWidth / window.innerHeight);
 
@@ -160,19 +176,36 @@ export class Game {
     this.hud = new Hud(ui);
     this.debug = new Debug(ui);
     this.scene.add(this.debug.lines);
+    this.roundHud = new RoundHud(ui);
     this.touch = new TouchControls(ui, this.settings.touchLayout);
-    const coarse = window.matchMedia?.('(pointer: coarse)').matches || 'ontouchstart' in window;
-    this.touch.setEnabled(coarse);
-    window.addEventListener('touchstart', () => this.touch.enabled || this.touch.setEnabled(true), { once: true, passive: true });
+    this.isTouch = !!(window.matchMedia?.('(pointer: coarse)').matches || 'ontouchstart' in window);
+    window.addEventListener(
+      'touchstart',
+      () => {
+        this.isTouch = true;
+        this.touch.setEnabled(this.mode === 'run');
+      },
+      { once: true, passive: true },
+    );
     this.input = new InputManager([
       { name: 'keyboard', source: new Keyboard() },
       { name: 'gamepad', source: new GamepadInput() },
       { name: 'touch', source: this.touch },
     ]);
+    this.garage = new Garage(ui, this.progress, () => this.baseConfig, {
+      changed: () => this.rebuildPlayer(),
+      deploy: () => this.deploy(),
+      openTuning: () => this.tuning.setOpen(true),
+    });
+    this.results = new Results(ui);
+    this.results.onContinue = () => this.enterGarage();
     this.pause = new PauseMenu(ui, {
       resume: () => this.setPaused(false),
-      resetCar: () => this.resetPlayer(),
-      respawnWorld: () => this.respawnWorld(),
+      flipCar: () => this.player.placeUpright(),
+      abandon: () => {
+        this.setPaused(false);
+        this.round.abandon();
+      },
       openTuning: () => this.tuning.setOpen(true),
       toggleMute: () => {
         this.setSetting('muted', !this.settings.muted);
@@ -230,14 +263,13 @@ export class Game {
     this.audio.setMuted(this.settings.muted);
     this.setDebug(this.settings.showFps, this.settings.showColliders);
     this.world.gravity = { x: 0, y: -PHYSICS.gravity, z: 0 };
-    this.player.applyMass();
+    this.refreshPlayerConfig();
 
     this.bindEvents();
     window.addEventListener('resize', () => this.resize());
     this.resize();
 
-    this.rig.subject.position.copy(this.player.position);
-    this.rig.snap();
+    this.enterGarage();
     this.loop = new Loop(
       60,
       (dt) => this.physicsStep(dt),
@@ -255,17 +287,147 @@ export class Game {
     this.owners.set(v.collider.handle, { kind: 'vehicle', v });
   }
 
+  private removeVehicle(v: Vehicle): void {
+    this.owners.delete(v.collider.handle);
+    const i = this.vehicles.indexOf(v);
+    if (i >= 0) this.vehicles.splice(i, 1);
+    this.fx.forget(v);
+    v.dispose();
+  }
+
+  /** Player config = tuned base + purchased upgrades. */
+  private effectiveConfig(): VehicleConfig {
+    return applyUpgrades(this.baseConfig, this.progress.data.upgrades);
+  }
+
+  /** Recompute the live player config in place, e.g. after a tuning slider moves. */
+  private refreshPlayerConfig(): void {
+    Object.assign(this.player.config, this.effectiveConfig());
+    this.player.applyMass();
+  }
+
+  /** Build (or rebuild) the player's car from the current loadout and paint. */
+  rebuildPlayer(): void {
+    const sp = this.gw.playerSpawn;
+    if (this.player) this.removeVehicle(this.player);
+    const d = this.progress.data;
+    this.player = VehicleFactory.create(this.ctx, PLAYER_CAR, {
+      isPlayer: true,
+      position: sp.position,
+      yaw: sp.yaw,
+      look: { paint: PAINTS[d.paint]?.color, upgrades: d.upgrades },
+      config: this.effectiveConfig(),
+    });
+    this.addVehicle(this.player);
+    this.player.respawn();
+    if (this.mode === 'garage') this.settle();
+  }
+
+  /** Run physics briefly with no input so freshly placed cars rest on their wheels. */
+  private settle(steps = 90): void {
+    const dt = 1 / 60;
+    for (const v of this.vehicles) {
+      v.input.throttle = 0;
+      v.input.steer = 0;
+      v.input.brake = 0;
+      v.controller.frozen = true;
+    }
+    for (let i = 0; i < steps; i++) {
+      for (const v of this.vehicles) {
+        v.snapshotVelocity();
+        v.physicsStep(dt);
+      }
+      this.world.step(this.eventQueue);
+      this.eventQueue.clear();
+      for (const v of this.vehicles) v.capture();
+    }
+    for (const v of this.vehicles) {
+      v.interp.snap(v.body);
+      v.controller.frozen = false;
+    }
+    this.gw.destructibles.step();
+  }
+
+  /** Fresh set of dummy cars: the Hauler plus a random light car in every other slot. */
+  private spawnDummies(): void {
+    for (const v of this.dummies) this.removeVehicle(v);
+    this.dummies.length = 0;
+    this.drivers.length = 0;
+    for (const spawn of this.gw.dummies) {
+      const def = spawn.def === 'hauler' ? DUMMY_HAULER : Math.random() < 0.5 ? DUMMY_BUGGY : DUMMY_SEDAN;
+      const v = VehicleFactory.create(this.ctx, def, { position: spawn.position, yaw: spawn.yaw });
+      this.addVehicle(v);
+      this.dummies.push(v);
+      if (spawn.route.length) this.drivers.push(new WaypointDriver(v, spawn.route, spawn.speed));
+    }
+  }
+
+  private setRunUi(on: boolean): void {
+    this.hud.root.hidden = !on;
+    this.roundHud.setVisible(on);
+    this.touch.setEnabled(on && this.isTouch);
+  }
+
+  /** Back to the garage: reset the map, repair and rebuild the car, orbit camera. */
+  enterGarage(note = ''): void {
+    this.mode = 'garage';
+    this.round.stop();
+    this.results.hide();
+    this.pause.setOpen(false);
+    this.loop && (this.loop.paused = false);
+    this.respawnWorld();
+    this.rebuildPlayer();
+    this.setRunUi(false);
+    this.garage.setOpen(true, note);
+    this.rig.mode = 'orbit';
+    this.updateGarageShift();
+    this.rig.subject.position.copy(this.player.interp.pos);
+  }
+
+  private updateGarageShift(): void {
+    const w = window.innerWidth;
+    const panel = this.garage.root.querySelector('.g-panel') as HTMLElement | null;
+    const pw = panel?.offsetWidth ?? 0;
+    this.rig.setShift(this.mode === 'garage' && w > 520 ? pw / 2 : 0);
+  }
+
+  /** Launch a run from the garage. */
+  deploy(): void {
+    if (this.mode !== 'garage') return;
+    this.mode = 'run';
+    this.garage.setOpen(false);
+    this.tuning.setOpen(false);
+    this.player.respawn();
+    this.round.start();
+    this.setRunUi(true);
+    this.rig.mode = 'follow';
+    this.rig.setShift(0);
+    this.rig.subject.position.copy(this.player.interp.pos);
+    this.rig.snap();
+    this.loop.paused = false;
+  }
+
+  private onRoundEnd(r: RoundResult): void {
+    this.progress.recordRun(r.extracted, r.haul);
+    this.mode = 'results';
+    this.setRunUi(false);
+    this.hud.root.hidden = false;
+    this.results.show(r, this.progress.data.parts);
+  }
+
+  /** Put the player back on its wheels where it is, keeping its damage. */
+  flipPlayer(): void {
+    if (!this.player.wrecked) this.player.placeUpright();
+  }
+
   private tuningSections(): TuningSection[] {
-    const c = this.player.config as unknown as Record<string, number>;
+    const c = this.baseConfig as unknown as Record<string, number>;
     return [
       {
         id: 'vehicle',
-        title: 'Vehicle',
+        title: 'Vehicle (before upgrades)',
         target: c,
-        onChange: (k) => {
-          if (k === 'mass') this.player.applyMass();
-          if (k === 'integrity') this.player.damage.repair();
-        },
+        onChange: () => this.refreshPlayerConfig(),
         sliders: [
           { key: 'mass', min: 400, max: 4000, step: 50 },
           { key: 'enginePower', min: 4000, max: 45000, step: 500 },
@@ -285,6 +447,18 @@ export class Game {
           { key: 'integrity', min: 20, max: 500, step: 5 },
           { key: 'damageMultiplier', min: 0, max: 5, step: 0.05 },
           { key: 'deformStrength', min: 0, max: 4, step: 0.05 },
+          { key: 'ramPower', min: 0.2, max: 4, step: 0.05 },
+        ],
+      },
+      {
+        id: 'round',
+        title: 'Run',
+        target: ROUND as unknown as Record<string, number>,
+        sliders: [
+          { key: 'extractUnlock', min: 5, max: 300, step: 5, label: 'extractUnlock (s)' },
+          { key: 'extractHold', min: 0.5, max: 10, step: 0.5, label: 'extractHold (s)' },
+          { key: 'countdown', min: 0, max: 5, step: 1 },
+          { key: 'deathDelay', min: 0.5, max: 6, step: 0.5 },
         ],
       },
       {
@@ -386,22 +560,26 @@ export class Game {
   }
 
   setPaused(p: boolean): void {
+    if (p && this.mode !== 'run') return;
     this.pause.setOpen(p);
-    this.loop.paused = p || this.tuning.open;
+    this.loop.paused = p || (this.tuning.open && this.mode === 'run');
   }
 
+  /** Out of bounds: back to the spawn point, damage kept. */
   resetPlayer(): void {
-    this.player.respawn();
+    const sp = this.gw.playerSpawn;
+    this.player.teleport(sp.position, sp.yaw);
     this.rig.subject.position.copy(this.player.position);
     this.rig.snap();
     bus.emit('playerReset', {});
   }
 
+  /** New dummy cars, props restored, debris and effects cleared. */
   respawnWorld(): void {
-    for (const v of this.dummies) v.respawn();
-    for (const d of this.drivers) d.reset();
+    this.spawnDummies();
     this.gw.destructibles.resetAll();
     this.debris.clear();
+    this.fx.clear();
     this.explosions.length = 0;
     bus.emit('worldReset', {});
   }
@@ -416,10 +594,9 @@ export class Game {
     }
     if (input.wasPressed('toggleTuning')) {
       this.tuning.toggle();
-      this.loop.paused = this.pause.open || this.tuning.open;
+      this.loop.paused = this.pause.open || (this.tuning.open && this.mode === 'run');
     }
-    if (input.wasPressed('reset')) this.resetPlayer();
-    if (input.wasPressed('respawnWorld')) this.respawnWorld();
+    if (input.wasPressed('reset') && this.mode === 'run') this.flipPlayer();
     if (input.wasPressed('toggleDebug')) {
       const on = !(this.settings.showFps && this.settings.showColliders);
       this.setDebug(on, on);
@@ -427,6 +604,17 @@ export class Game {
     if (input.wasPressed('toggleCamera')) CAMERA.rotateWithCar = CAMERA.rotateWithCar > 0.5 ? 0 : 1;
     const s = input.state;
     const pi = this.player.input;
+    // No driving in the garage, on the results screen or during the countdown.
+    const frozen = this.mode !== 'run' || this.round.state === 'countdown';
+    this.player.controller.frozen = frozen;
+    if (frozen) {
+      pi.throttle = 0;
+      pi.brake = 0;
+      pi.steer = 0;
+      pi.handbrake = false;
+      pi.boost = false;
+      return;
+    }
     pi.throttle = s.throttle;
     pi.brake = s.brake;
     pi.steer = s.steer;
@@ -435,7 +623,10 @@ export class Game {
   }
 
   private physicsStep(dt: number): void {
+    // The garage is a still diorama of the map.
+    if (this.mode === 'garage') return;
     this.time += dt;
+    if (this.mode === 'run') this.round.update(dt, this.player);
     for (const d of this.drivers) d.update(dt);
     for (const v of this.vehicles) {
       v.snapshotVelocity();
@@ -538,8 +729,11 @@ export class Game {
       const ratioB = ma === Infinity ? 1 : ma / (ma + mb);
       const point = _p.clone();
       // The manifold normal points from collider 1 toward collider 2.
-      if (a.kind === 'vehicle') a.v.takeHit(point, _d.copy(_n).negate(), closing, ratioA * (terrainHit ? 0.6 : 1));
-      if (b.kind === 'vehicle') b.v.takeHit(point, _d.copy(_n), closing, ratioB * (terrainHit ? 0.6 : 1));
+      // A car hitting with its front end applies its ram bonus to the other car.
+      const ramA = a.kind === 'vehicle' && b.kind === 'vehicle' && a.v.isFrontContact(point) ? a.v.config.ramPower : 1;
+      const ramB = a.kind === 'vehicle' && b.kind === 'vehicle' && b.v.isFrontContact(point) ? b.v.config.ramPower : 1;
+      if (a.kind === 'vehicle') a.v.takeHit(point, _d.copy(_n).negate(), closing, ratioA * (terrainHit ? 0.6 : 1), ramB);
+      if (b.kind === 'vehicle') b.v.takeHit(point, _d.copy(_n), closing, ratioB * (terrainHit ? 0.6 : 1), ramA);
       if (a.kind === 'prop') this.gw.destructibles.damage(a.d, closing * ratioA, this.velocityAt(b, point, new THREE.Vector3()));
       if (b.kind === 'prop') this.gw.destructibles.damage(b.d, closing * ratioB, this.velocityAt(a, point, new THREE.Vector3()));
 
@@ -619,6 +813,7 @@ export class Game {
     this.rig.camera.aspect = w / h;
     this.rig.camera.updateProjectionMatrix();
     this.updatePointScale();
+    if (this.garage?.open) this.updateGarageShift();
   }
 
   private updatePointScale(): void {
@@ -636,7 +831,8 @@ export class Game {
     subj.position.copy(p.visual.root.position);
     subj.velocity.copy(p.prevLinvel);
     subj.yaw = p.yaw;
-    if (!this.loop.paused) this.rig.update(dt);
+    if (!this.loop.paused || this.mode === 'garage') this.rig.update(dt);
+    this.round.animate(performance.now() / 1000);
     this.updatePointScale();
 
     // Keep the shadow camera centred on the view, snapped to texels to avoid shimmer.
@@ -650,6 +846,7 @@ export class Game {
 
     if (!this.loop.paused) this.fx.update(dt, this.vehicles);
     this.hud.update(p);
+    if (this.mode === 'run') this.roundHud.update(this.round, this.rig.camera, p.interp.pos);
     this.touch.setBoostLevel(p.config.boostCapacity > 0 ? p.controller.boost / p.config.boostCapacity : 0);
     const ctrl = p.controller;
     this.audio.updateCar(
@@ -658,7 +855,7 @@ export class Game {
       ctrl.slip,
       ctrl.boosting,
       ctrl.grounded > 0,
-      !p.wrecked && !this.loop.paused,
+      !p.wrecked && !this.loop.paused && this.mode === 'run',
     );
     this.debug.update(dt, this.world, `· ${this.renderer.info.render.calls} calls`);
     this.renderer.render(this.scene, this.rig.camera);

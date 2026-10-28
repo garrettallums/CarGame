@@ -10,7 +10,7 @@ export interface AnalogState {
 }
 
 /** One-shot actions, true for a single frame. */
-export type ButtonAction = 'reset' | 'pause' | 'toggleTuning' | 'respawnWorld' | 'toggleDebug' | 'toggleCamera';
+export type ButtonAction = 'reset' | 'pause' | 'toggleTuning' | 'toggleDebug' | 'toggleCamera';
 
 export interface InputSource {
   /** Write this source's contribution into `out`. */

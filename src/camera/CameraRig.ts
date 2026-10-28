@@ -15,6 +15,11 @@ export class CameraRig {
   private yaw = 0;
   private trauma = 0;
   private time = 0;
+  /** 'follow' in a run; 'orbit' circles the car in the garage. */
+  mode: 'follow' | 'orbit' = 'follow';
+  private orbitAngle = 0.8;
+  /** Screen-space shift (px) so the garage car sits beside the panel. */
+  private shiftX = 0;
   /** Position the camera follows, set each frame. */
   readonly subject = { position: new THREE.Vector3(), velocity: new THREE.Vector3(), yaw: 0 };
 
@@ -40,10 +45,31 @@ export class CameraRig {
     this.update(0);
   }
 
+  setShift(px: number): void {
+    this.shiftX = px;
+  }
+
+  private updateOrbit(dt: number): void {
+    const s = this.subject;
+    this.orbitAngle += dt * 0.22;
+    const cam = this.camera;
+    cam.fov = 38;
+    cam.position.set(s.position.x + Math.sin(this.orbitAngle) * 11.5, s.position.y + 4.4, s.position.z + Math.cos(this.orbitAngle) * 11.5);
+    // Aim a little below the car so it sits above the deploy controls.
+    cam.lookAt(s.position.x, s.position.y - 1.1, s.position.z);
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    if (this.shiftX) cam.setViewOffset(w, h, -this.shiftX, 0, w, h);
+    else cam.clearViewOffset();
+    cam.updateProjectionMatrix();
+  }
+
   update(dt: number): void {
     const c = this.config;
     const s = this.subject;
     this.time += dt;
+    if (this.mode === 'orbit') return this.updateOrbit(dt);
+    if (this.camera.view?.enabled) this.camera.clearViewOffset();
     this.camera.fov = c.fov;
     const speed = Math.hypot(s.velocity.x, s.velocity.z);
 

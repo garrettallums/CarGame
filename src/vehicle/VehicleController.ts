@@ -81,6 +81,8 @@ export class VehicleController {
   /** Set when the car has been upside-down too long. */
   wantsReset = false;
   disabled = false;
+  /** Ignore input and hold still, e.g. during the countdown. */
+  frozen = false;
   private surfaceTimer = 0;
   private ray: RAPIER.Ray;
 
@@ -198,15 +200,17 @@ export class VehicleController {
     this.lateralSpeed = ls;
     this.speed = Math.hypot(fs, ls);
     const g = this.grounded;
-    const throttle = this.disabled ? 0 : clamp(input.throttle, 0, 1);
-    const brake = this.disabled ? 0 : clamp(input.brake, 0, 1);
-    const steer = this.disabled ? 0 : clamp(input.steer, -1, 1);
-    const handbrake = !this.disabled && input.handbrake;
+    const off = this.disabled || this.frozen;
+    const throttle = off ? 0 : clamp(input.throttle, 0, 1);
+    const brake = off ? 0 : clamp(input.brake, 0, 1);
+    const steer = off ? 0 : clamp(input.steer, -1, 1);
+    // Frozen cars (countdown, garage) hold position with the handbrake.
+    const handbrake = this.frozen || (!off && input.handbrake);
 
     // --- Engine, brakes, boost --------------------------------------------
     let force = 0;
     this.boosting = false;
-    const wantBoost = !this.disabled && input.boost && cfg.boostCapacity > 0;
+    const wantBoost = !off && input.boost && cfg.boostCapacity > 0;
     if (wantBoost && this.boost > 0) {
       this.boost = Math.max(0, this.boost - dt);
       this.boosting = true;

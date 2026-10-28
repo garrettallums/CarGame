@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import type { VehicleDefinition, VehicleShape } from '../config/vehicles';
+import type { VehicleConfig, VehicleDefinition, VehicleShape } from '../config/vehicles';
+import type { UpgradeLevels } from '../config/upgrades';
 import { box, merge, paint } from '../core/geo';
 import { DeformableMesh } from './DeformableMesh';
 import type { DamageZone } from './DamageModel';
@@ -60,25 +61,33 @@ function makePart(
   return mesh;
 }
 
-export function buildVehicleVisual(shape: VehicleShape, isPlayer: boolean): VehicleVisual {
+/** Garage choices that change how a car looks. */
+export interface VehicleLook {
+  paint?: number;
+  upgrades?: Partial<UpgradeLevels>;
+}
+
+export function buildVehicleVisual(shape: VehicleShape, isPlayer: boolean, look: VehicleLook = {}): VehicleVisual {
   const { length: L, width: W, height: H } = shape;
   const root = new THREE.Group();
   const parts: VehiclePart[] = [];
-  const body = new THREE.MeshLambertMaterial({ color: shape.color, flatShading: true });
+  const body = new THREE.MeshLambertMaterial({ color: look.paint ?? shape.color, flatShading: true });
+  const up = { engine: 0, armor: 0, tires: 0, ram: 0, boost: 0, ...look.upgrades };
   const trim = new THREE.MeshLambertMaterial({ color: shape.trimColor, flatShading: true });
   const glass = new THREE.MeshLambertMaterial({ color: 0x1b2328, flatShading: true });
 
   makePart(parts, root, 'core', segBox(W * 0.86, H, L * 0.8), body, [0, 0, 0], null);
 
   const hoodLen = L * 0.28;
-  makePart(parts, root, 'hood', segBox(W * 0.84, 0.14, hoodLen), body, [0, H / 2 + 0.07, L / 2 - hoodLen / 2 - 0.2], 'front');
+  const hood = makePart(parts, root, 'hood', segBox(W * 0.84, 0.14, hoodLen), body, [0, H / 2 + 0.07, L / 2 - hoodLen / 2 - 0.2], 'front');
   const fb = makePart(parts, root, 'frontBumper', segBox(W * 0.98, H * 0.55, 0.34), trim, [0, -H * 0.12, L / 2 - 0.17], 'front', 0.5);
   makePart(parts, root, 'rearBumper', segBox(W * 0.98, H * 0.55, 0.34), trim, [0, -H * 0.12, -L / 2 + 0.17], 'rear', 0.5);
 
   const doorLen = L * 0.6;
-  makePart(parts, root, 'leftDoor', segBox(0.14, H * 0.86, doorLen), body, [W / 2 - 0.08, 0.02, 0], 'left');
-  makePart(parts, root, 'rightDoor', segBox(0.14, H * 0.86, doorLen), body, [-W / 2 + 0.08, 0.02, 0], 'right');
+  const leftDoor = makePart(parts, root, 'leftDoor', segBox(0.14, H * 0.86, doorLen), body, [W / 2 - 0.08, 0.02, 0], 'left');
+  const rightDoor = makePart(parts, root, 'rightDoor', segBox(0.14, H * 0.86, doorLen), body, [-W / 2 + 0.08, 0.02, 0], 'right');
 
+  let trunk: THREE.Mesh | null = null;
   if (shape.bed) {
     // Flatbed walls behind the cabin.
     const bedLen = L * 0.5;
@@ -100,7 +109,7 @@ export function buildVehicleVisual(shape: VehicleShape, isPlayer: boolean): Vehi
     parts.push({ name: 'load', mesh: load, deform: null, zone: 'rear', breakAt: 0.5, detached: false });
   } else {
     const trunkLen = L * 0.18;
-    makePart(parts, root, 'trunk', segBox(W * 0.84, 0.12, trunkLen), body, [0, H / 2 + 0.06, -L / 2 + trunkLen / 2 + 0.22], 'rear');
+    trunk = makePart(parts, root, 'trunk', segBox(W * 0.84, 0.12, trunkLen), body, [0, H / 2 + 0.06, -L / 2 + trunkLen / 2 + 0.22], 'rear');
   }
 
   if (shape.cabinHeight > 0) {
@@ -165,12 +174,65 @@ export function buildVehicleVisual(shape: VehicleShape, isPlayer: boolean): Vehi
     ram.deleteAttribute('color');
     const ramMesh = new THREE.Mesh(ram, new THREE.MeshLambertMaterial({ color: 0x8c8378, flatShading: true }));
     ramMesh.castShadow = true;
+    // Bigger, longer spikes per ram level.
+    ramMesh.scale.set(1 + up.ram * 0.04, 1 + up.ram * 0.45, 1 + up.ram * 0.35);
     fb.add(ramMesh);
     // Exhaust stacks.
     const ex = merge([box(0.12, 0.6, 0.12, W * 0.32, H / 2 + 0.3, -L * 0.18), box(0.12, 0.6, 0.12, -W * 0.32, H / 2 + 0.3, -L * 0.18)]);
     ex.deleteAttribute('color');
     const exMesh = new THREE.Mesh(ex, trim);
     root.add(exMesh);
+  }
+
+  // Upgrade parts the player can see on the car.
+  const plateMat = new THREE.MeshLambertMaterial({ color: 0x5a524b, flatShading: true });
+  const addPlate = (parent: THREE.Mesh, geo: THREE.BufferGeometry) => {
+    const m = new THREE.Mesh(geo, plateMat);
+    m.castShadow = true;
+    parent.add(m);
+  };
+  if (up.armor >= 1) {
+    // Bolted side plates; they come off with the doors.
+    for (const [door, s] of [
+      [leftDoor, 1],
+      [rightDoor, -1],
+    ] as [THREE.Mesh, number][]) {
+      const g: THREE.BufferGeometry[] = [];
+      for (let i = 0; i < 1 + up.armor; i++) g.push(box(0.08, H * 0.5, doorLen / (1 + up.armor) - 0.08, s * 0.1, -0.02, -doorLen / 2 + (doorLen / (1 + up.armor)) * (i + 0.5)));
+      const geo = merge(g);
+      geo.deleteAttribute('color');
+      addPlate(door, geo);
+    }
+  }
+  if (up.armor >= 2) {
+    const g = box(W * 0.7, 0.06, hoodLen * 0.7, 0, 0.1, 0);
+    g.deleteAttribute('color');
+    addPlate(hood, g);
+  }
+  if (up.armor >= 3 && trunk) {
+    const g = box(W * 0.8, 0.3, 0.08, 0, 0.1, -L * 0.09);
+    g.deleteAttribute('color');
+    addPlate(trunk, g);
+  }
+  if (up.engine >= 1) {
+    // Hood scoop grows with each engine level; level 3 adds blower stacks.
+    const g: THREE.BufferGeometry[] = [box(W * 0.3, 0.1 + up.engine * 0.07, hoodLen * 0.5, 0, 0.12 + up.engine * 0.035, 0)];
+    if (up.engine >= 3) for (const x of [-0.12, 0.12]) g.push(box(0.1, 0.35, 0.1, x * W, 0.45, -hoodLen * 0.1));
+    const geo = merge(g);
+    geo.deleteAttribute('color');
+    const scoop = new THREE.Mesh(geo, trim);
+    scoop.castShadow = true;
+    hood.add(scoop);
+  }
+  if (up.boost >= 1 && trunk) {
+    // Nitro bottles strapped across the trunk.
+    const g: THREE.BufferGeometry[] = [];
+    for (let i = 0; i < up.boost; i++) {
+      g.push(paint(new THREE.CylinderGeometry(0.11, 0.11, W * 0.6, 8).rotateZ(Math.PI / 2).translate(0, 0.17, -0.15 + i * 0.25), 0x3b6f9c));
+    }
+    const tanks = new THREE.Mesh(merge(g), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
+    tanks.castShadow = true;
+    trunk.add(tanks);
   }
 
   // Wheels.
@@ -196,6 +258,8 @@ export function buildVehicleVisual(shape: VehicleShape, isPlayer: boolean): Vehi
     pivot.position.copy(pos);
     const mesh = new THREE.Mesh(wheelGeo, wheelMat);
     mesh.castShadow = true;
+    // Wider, chunkier tires per tire level.
+    mesh.scale.set(1 + up.tires * 0.18, 1 + up.tires * 0.04, 1 + up.tires * 0.04);
     pivot.add(mesh);
     root.add(pivot);
     wheels.push({ pivot, mesh, front, side });
@@ -214,10 +278,14 @@ export function buildVehicleVisual(shape: VehicleShape, isPlayer: boolean): Vehi
 }
 
 export const VehicleFactory = {
-  create(ctx: GameContext, def: VehicleDefinition, opts: { isPlayer?: boolean; position: THREE.Vector3; yaw: number }): Vehicle {
-    const visual = buildVehicleVisual(def.shape, !!opts.isPlayer);
+  create(
+    ctx: GameContext,
+    def: VehicleDefinition,
+    opts: { isPlayer?: boolean; position: THREE.Vector3; yaw: number; look?: VehicleLook; config?: VehicleConfig },
+  ): Vehicle {
+    const visual = buildVehicleVisual(def.shape, !!opts.isPlayer, opts.look);
     // Each vehicle gets its own mutable copy of the config so tuning is per-instance.
-    const config = { ...def.config };
+    const config = { ...(opts.config ?? def.config) };
     return new Vehicle(ctx, def, config, visual, !!opts.isPlayer, opts.position, opts.yaw);
   },
 };

@@ -7,8 +7,8 @@ import { COLLISION, type Rapier } from '../core/Physics';
 import { rand } from '../core/math';
 
 interface PanelSlot {
-  body: RAPIER.RigidBody;
-  collider: RAPIER.Collider | null;
+  /** Created per spawn and removed on release; only the mesh is pooled. */
+  body: RAPIER.RigidBody | null;
   mesh: THREE.Mesh;
   interp: InterpPose;
   life: number;
@@ -54,12 +54,11 @@ export class DebrisSystem {
     private world: RAPIER.World,
   ) {
     for (let i = 0; i < DEBRIS.maxPanels; i++) {
-      const body = world.createRigidBody(R.RigidBodyDesc.dynamic().setEnabled(false).setLinearDamping(0.3).setAngularDamping(0.4));
       const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshLambertMaterial({ flatShading: true, transparent: true }));
       mesh.visible = false;
       mesh.castShadow = true;
       this.group.add(mesh);
-      this.panels.push({ body, collider: null, mesh, interp: new InterpPose(), life: 0, active: false });
+      this.panels.push({ body: null, mesh, interp: new InterpPose(), life: 0, active: false });
     }
     const kinds = Object.keys(CHUNK_SHAPES) as DebrisKind[];
     const perKind = Math.floor(DEBRIS.maxChunks / kinds.length);
@@ -93,7 +92,7 @@ export class DebrisSystem {
   spawnPanel(source: THREE.Mesh, pos: THREE.Vector3, rot: THREE.Quaternion, vel: THREE.Vector3, angvel: THREE.Vector3, scale = new THREE.Vector3(1, 1, 1)): void {
     const slot = this.panels[this.panelCursor];
     this.panelCursor = (this.panelCursor + 1) % this.panels.length;
-    if (slot.collider) this.world.removeCollider(slot.collider, false);
+    if (slot.active) this.releasePanel(slot);
     slot.mesh.geometry.dispose();
     const geo = source.geometry.clone();
     // Bake in children (ram bars, windows) so they fly off with the panel.
@@ -122,17 +121,18 @@ export class DebrisSystem {
     const hx = Math.max(0.05, _size.x / 2);
     const hy = Math.max(0.05, _size.y / 2);
     const hz = Math.max(0.05, _size.z / 2);
-    slot.collider = this.world.createCollider(
+    // A fresh body per panel: re-shaping colliders on disabled pooled bodies is fragile in Rapier.
+    const b = this.world.createRigidBody(this.R.RigidBodyDesc.dynamic().setLinearDamping(0.3).setAngularDamping(0.4));
+    slot.body = b;
+    this.world.createCollider(
       this.R.ColliderDesc.cuboid(hx, hy, hz)
         .setTranslation(center.x, center.y, center.z)
         .setDensity(250)
         .setFriction(0.7)
         .setRestitution(0.15)
         .setCollisionGroups(COLLISION.debris),
-      slot.body,
+      b,
     );
-    const b = slot.body;
-    b.setEnabled(true);
     b.setTranslation({ x: pos.x, y: pos.y, z: pos.z }, true);
     b.setRotation({ x: rot.x, y: rot.y, z: rot.z, w: rot.w }, true);
     b.setLinvel({ x: vel.x, y: vel.y, z: vel.z }, true);
@@ -169,7 +169,7 @@ export class DebrisSystem {
 
   /** All active debris bodies, for explosions. */
   *activeBodies(): Generator<RAPIER.RigidBody> {
-    for (const p of this.panels) if (p.active) yield p.body;
+    for (const p of this.panels) if (p.active && p.body) yield p.body;
     for (const c of this.chunks) if (c.active) yield c.body;
   }
 
@@ -178,7 +178,7 @@ export class DebrisSystem {
       if (!p.active) continue;
       p.life -= dt;
       if (p.life <= 0) this.releasePanel(p);
-      else p.interp.capture(p.body);
+      else if (p.body) p.interp.capture(p.body);
     }
     for (const c of this.chunks) {
       if (!c.active) continue;
@@ -193,7 +193,8 @@ export class DebrisSystem {
   private releasePanel(p: PanelSlot): void {
     p.active = false;
     p.mesh.visible = false;
-    p.body.setEnabled(false);
+    if (p.body) this.world.removeRigidBody(p.body);
+    p.body = null;
   }
 
   render(alpha: number): void {

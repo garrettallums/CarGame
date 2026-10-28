@@ -163,8 +163,9 @@ export class Vehicle {
   /**
    * Handle an impact. `inward` points into this car, `closing` is the relative
    * speed along the contact normal and `massRatio` is other / (self + other).
+   * `dealtMultiplier` is the attacker's ram bonus when it hit with its front.
    */
-  takeHit(point: THREE.Vector3, inward: THREE.Vector3, closing: number, massRatio: number): number {
+  takeHit(point: THREE.Vector3, inward: THREE.Vector3, closing: number, massRatio: number, dealtMultiplier = 1): number {
     const excess = closing - DAMAGE.minImpactSpeed;
     if (excess <= 0) return 0;
     const local = this.worldToLocal(point, _p);
@@ -178,7 +179,7 @@ export class Vehicle {
     }
     if (this.wrecked) return 0;
     const zone = this.zoneAt(local);
-    const raw = excess * massRatio * this.config.damageMultiplier * DAMAGE.damageScale;
+    const raw = excess * massRatio * this.config.damageMultiplier * DAMAGE.damageScale * dealtMultiplier;
     const res = this.damage.hit(zone, raw);
     if (res.damage > 0) bus.emit('vehicleDamaged', { vehicle: this, zone, amount: res.damage, isPlayer: this.isPlayer });
     this.shedParts(zone);
@@ -325,5 +326,17 @@ export class Vehicle {
   dispose(): void {
     this.ctx.world.removeRigidBody(this.body);
     this.ctx.scene.remove(this.visual.root);
+    // Geometries and materials are per-vehicle, so free them with it.
+    this.visual.root.traverse((o) => {
+      if (o instanceof THREE.Mesh) {
+        o.geometry.dispose();
+        (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose());
+      }
+    });
+  }
+
+  /** True if a world-space point is on this car's front end. */
+  isFrontContact(point: THREE.Vector3): boolean {
+    return this.zoneAt(this.worldToLocal(point, _s)) === 'front';
   }
 }

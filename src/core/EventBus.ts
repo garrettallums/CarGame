@@ -19,6 +19,9 @@ export interface GameEvents {
   propBroken: { prop: unknown; type: string; position: THREE.Vector3 };
   explosion: { position: THREE.Vector3; radius: number; force: number };
   playerReset: Record<string, never>;
+  partsAwarded: { amount: number; label: string; total: number };
+  objectiveComplete: { label: string; reward: number };
+  extractionOpen: { position: THREE.Vector3 };
   worldReset: Record<string, never>;
 }
 

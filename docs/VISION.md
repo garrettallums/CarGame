@@ -4,6 +4,10 @@
 
 SAND & STEEL is a top-down vehicular destruction game set in a desert wasteland. You drive a scrap-built car, smash rivals until they visibly fall apart, salvage the wrecks, and upgrade your car to survive harder regions. Influences: the scavenging and convoys of Mad Max, the top-down readability of Micro Machines and Death Rally, and the satisfying crashes of Wreckfest. These are references for feel, not things to copy.
 
+## Run structure (decided after the Phase 1 playtest)
+
+The game is played in **runs on a contained map**, not an open world. You deploy from the garage, earn **Parts** by wrecking vehicles (the giant Hauler is worth the most) and completing objectives, and after a set time an **extraction** point opens. Reach it to bank your Parts; get wrecked first and you lose everything earned that run. Between runs you spend Parts in the garage on upgrades and paint, then launch the next run.
+
 ## Pillars
 
 1. **Driving feels great first.** Responsive, arcade, drifty. Nothing else matters if driving isn't fun.
@@ -13,7 +17,7 @@ SAND & STEEL is a top-down vehicular destruction game set in a desert wasteland.
 
 ## Core loop
 
-Explore → encounter → fight or race → wreck → salvage → upgrade → explore further.
+Deploy → wreck and salvage (Parts) → complete objectives → extract (or lose the haul) → upgrade in the garage → deploy again.
 Sessions should work in 5 minutes on a phone or in a longer run at a desk.
 
 ## Roadmap

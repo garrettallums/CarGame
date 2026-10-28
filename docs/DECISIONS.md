@@ -48,6 +48,24 @@ Notable choices made while building Phase 1, newest at the bottom.
 - Particles are four `THREE.Points` systems (dust, smoke, fire, sparks) with fixed capacity. Tire tracks are one ring-buffer mesh of 1800 quads that fade in the shader.
 - Draw calls at spawn are roughly 100 (mostly the six cars' parts and their shadows). Not yet measured on a real iPhone; the in-game FPS counter (F3 or Tuning → Show FPS) shows draw calls too.
 
+## Run loop (extraction)
+
+Added after the first playtest feedback: rounds on a contained map, Parts as the reward, extraction to keep them, a garage between runs.
+
+- **Flow** is a three-state machine in `Game`: `garage` → `run` → `results` → `garage`. The garage is a still diorama: physics is not stepped and the camera orbits the car, so nothing on the map can hit it while you shop.
+- **Map**: the arena shrank from 400 m to 300 m ("Rust Ridge") so runs stay dense. Each run respawns every car (the Hauler plus a random buggy or sedan in each other slot), restores props, and clears debris.
+- **Parts at risk**: `Round` keeps a ledger of what this run earned (per wreck, by vehicle type, plus objective bonuses). Nothing is written to the save until extraction succeeds. Being wrecked or abandoning records a failed run and discards the ledger.
+- **Credit**: every wreck and prop broken during a run counts, whoever caused it (chain explosions, a dummy pushed into a barrel). There are no other agents yet, so attribution would add code without changing outcomes. Revisit when Phase 2 adds enemies that can kill each other.
+- **Objectives** are data (`config/round.ts`): the Hauler objective always, plus two drawn at random from a small pool. Kinds are `destroyVehicle`, `wreckCount` and `breakProp`, matched against bus events.
+- **Extraction** opens after `extractUnlock` seconds at one of the two candidate points farthest from the player, so it is always a drive. The player must stay inside the ring for `extractHold` seconds. An on-screen pointer clamps to the screen edge when the beacon is off-screen.
+- **The Hauler** (5 t, 180 integrity) has `damageMultiplier` 5.5 because the mass-ratio damage formula otherwise makes heavy targets nearly immune to a 1.2 t car. Measured: a stock car needs about ten 50 mph T-bones; with a maxed ram bar, four or five.
+- **Upgrades** are additive config deltas per level (`config/upgrades.ts`), applied on top of the tuning panel's base config. The tuning panel therefore edits the *base* car, and upgrades stack on it. Every upgrade line carries a cost besides Parts (mostly mass, which already slows acceleration and turning through the physics).
+- **Ram bar** adds a new `ramPower` config value: damage the car deals when its own front end makes the contact.
+- **Visible upgrades**: armor plates on the doors/hood/trunk, a hood scoop, larger ram spikes, nitro bottles and wider tires. They are children of the panels they sit on, so they fly off with those panels.
+- Refunds return the full price. That keeps balancing experiments cheap during development; it should probably become partial (or go away) once the economy settles.
+- **Countdown/garage hold**: the controller has a `frozen` flag that ignores input and holds the handbrake. Using full brake for this made the car reverse, because brake at standstill means reverse.
+- Detached panels now get a fresh rigid body per spawn that is removed on release; only meshes are pooled. Recycling colliders on disabled pooled bodies coincided with an intermittent Rapier panic during testing. It has not reappeared since, but the panic was intermittent, so that is likely rather than proven.
+
 ## Process
 
 - The modules were written in one pass rather than in the step-by-step order the build prompt suggests, then verified together with the Playwright smoke test (`npm run test:smoke`). History therefore starts with one large commit instead of one commit per step.

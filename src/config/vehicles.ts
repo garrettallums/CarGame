@@ -33,6 +33,8 @@ export interface VehicleConfig {
   damageMultiplier: number;
   /** Scales how deep dents go. */
   deformStrength: number;
+  /** Multiplies damage this car deals with its front end. */
+  ramPower: number;
 }
 
 /** Visual and collision shape. Not tuned live. */
@@ -83,6 +85,7 @@ export const PLAYER_CAR: VehicleDefinition = {
     integrity: 120,
     damageMultiplier: 1,
     deformStrength: 1,
+    ramPower: 1,
   },
   shape: {
     length: 4.4,
@@ -115,6 +118,7 @@ const dummyBase: Omit<VehicleConfig, 'mass' | 'enginePower' | 'maxSpeed' | 'inte
   armorSide: 0.05,
   damageMultiplier: 1.2,
   deformStrength: 1.2,
+  ramPower: 1,
 };
 
 export const DUMMY_BUGGY: VehicleDefinition = {
@@ -188,4 +192,39 @@ export const DUMMY_TRUCK: VehicleDefinition = {
   },
 };
 
-export const VEHICLE_DEFINITIONS = [PLAYER_CAR, DUMMY_BUGGY, DUMMY_SEDAN, DUMMY_TRUCK];
+/** The big objective target: slow, heavy, armored, worth a lot of Parts. */
+export const DUMMY_HAULER: VehicleDefinition = {
+  id: 'hauler',
+  name: 'Hauler',
+  config: {
+    ...dummyBase,
+    mass: 5000,
+    enginePower: 46000,
+    maxSpeed: 12,
+    integrity: 180,
+    armorFront: 0.3,
+    armorRear: 0.2,
+    armorSide: 0.2,
+    steerRate: 1.0,
+    // Its mass shrinks what each ram deals, so it is softer than it looks:
+    // about ten 50 mph T-bones from a stock car, four or five with a maxed ram bar.
+    damageMultiplier: 5.5,
+    deformStrength: 0.7,
+  },
+  shape: {
+    length: 8.4,
+    width: 3.0,
+    height: 1.1,
+    cabinLength: 2.2,
+    cabinHeight: 1.0,
+    cabinOffset: -2.6,
+    wheelRadius: 0.75,
+    wheelWidth: 0.6,
+    color: 0x8e5b2c,
+    trimColor: 0x24201c,
+    rollCage: false,
+    bed: true,
+  },
+};
+
+export const VEHICLE_DEFINITIONS = [PLAYER_CAR, DUMMY_BUGGY, DUMMY_SEDAN, DUMMY_TRUCK, DUMMY_HAULER];

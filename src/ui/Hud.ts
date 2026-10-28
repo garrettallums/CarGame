@@ -63,7 +63,7 @@ export class Hud {
       this.zoneEls.get(z)!.setAttribute('fill', zoneColor(v.damage.zoneFraction(z), v.damage.broken[z]));
     }
     let warn = '';
-    if (v.wrecked) warn = 'WRECKED — press R or ↻ to repair';
+    if (v.wrecked) warn = 'WRECKED';
     else if (health < 0.25) warn = 'ON FIRE';
     else if (v.damage.zoneFraction('front') < 0.4) warn = 'ENGINE FAILING';
     if (this.warnEl.textContent !== warn) this.warnEl.textContent = warn;

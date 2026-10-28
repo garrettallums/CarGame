@@ -5,7 +5,6 @@ const BUTTONS: [number, ButtonAction][] = [
   [3, 'reset'],
   [9, 'pause'],
   [8, 'toggleTuning'],
-  [2, 'respawnWorld'],
 ];
 
 /** Standard-mapping gamepad: left stick steer, triggers throttle/brake, A handbrake, B boost. */
