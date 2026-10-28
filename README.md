@@ -32,7 +32,7 @@ Touch has a second layout (steer stick + GAS/BRAKE buttons) under Tuning → Opt
 ## Layout
 
 ```
-src/core     loop (fixed 60 Hz physics, interpolated render), event bus, pools, Game wiring
+src/core     loop (fixed 60 Hz physics, interpolated render), event bus, physics setup, Game wiring
 src/vehicle  VehicleController, DamageModel, DeformableMesh, VehicleFactory, Vehicle, WaypointDriver
 src/input    InputManager + Keyboard, Gamepad, TouchControls adapters
 src/camera   CameraRig
